@@ -50,12 +50,14 @@ export default function SearchForm({ onSearch, isLoading }: SearchFormProps) {
   })
 
   const { data: countries = [] } = useQuery({
-    queryKey: ['countries'],
+    queryKey: ['countries', formData.cityFromId],
     queryFn: async (): Promise<Country[]> => {
-      const response = await fetch('/api/sletat/countries')
+      if (!formData.cityFromId) return []
+      const response = await fetch(`/api/sletat/countries?townFromId=${formData.cityFromId}`)
       if (!response.ok) throw new Error('Ошибка загрузки стран')
       return response.json()
     },
+    enabled: formData.cityFromId > 0,
     staleTime: 24 * 60 * 60 * 1000, // 24 часа
   })
 
@@ -70,6 +72,13 @@ export default function SearchForm({ onSearch, isLoading }: SearchFormProps) {
     enabled: formData.countryId > 0,
     staleTime: 6 * 60 * 60 * 1000, // 6 часов
   })
+
+  // Сброс выбранной страны при смене города вылета
+  useEffect(() => {
+    if (formData.cityFromId) {
+      setFormData(prev => ({ ...prev, countryId: undefined, cityId: undefined }))
+    }
+  }, [formData.cityFromId])
 
   // Сброс выбранного города при смене страны
   useEffect(() => {

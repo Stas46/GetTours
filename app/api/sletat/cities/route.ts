@@ -14,6 +14,25 @@ const querySchema = z.object({
   }),
 });
 
+// Mock-данные для городов по странам
+const mockCitiesByCountry: Record<number, City[]> = {
+  119: [ // Турция
+    { Id: 1334, Name: 'Стамбул', Default: false, DescriptionUrl: null, IsPopular: true, ParentId: null, OriginalName: 'Istanbul' },
+    { Id: 72, Name: 'Анталья', Default: false, DescriptionUrl: null, IsPopular: true, ParentId: null, OriginalName: 'Antalya' },
+    { Id: 149, Name: 'Белек', Default: false, DescriptionUrl: null, IsPopular: true, ParentId: null, OriginalName: 'Belek' },
+    { Id: 1592, Name: 'Кемер', Default: false, DescriptionUrl: null, IsPopular: true, ParentId: null, OriginalName: 'Kemer' },
+  ],
+  40: [ // Египет
+    { Id: 1642, Name: 'Шарм-эль-Шейх', Default: false, DescriptionUrl: null, IsPopular: true, ParentId: null, OriginalName: 'Sharm el-Sheikh' },
+    { Id: 372, Name: 'Хургада', Default: false, DescriptionUrl: null, IsPopular: true, ParentId: null, OriginalName: 'Hurghada' },
+    { Id: 37, Name: 'Александрия', Default: false, DescriptionUrl: null, IsPopular: false, ParentId: null, OriginalName: 'Alexandria' },
+  ],
+  46: [ // ОАЭ
+    { Id: 1099, Name: 'Дубай', Default: false, DescriptionUrl: null, IsPopular: true, ParentId: null, OriginalName: 'Dubai' },
+    { Id: 3576, Name: 'Абу-Даби', Default: false, DescriptionUrl: null, IsPopular: true, ParentId: null, OriginalName: 'Abu Dhabi' },
+  ],
+};
+
 // Кеш для городов по странам (время жизни 6 часов)
 const citiesCache = new Map<number, { data: City[], timestamp: number }>();
 const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 часов
@@ -35,6 +54,20 @@ export async function GET(request: NextRequest) {
     const params = querySchema.parse({
       countryId: searchParams.get('countryId'),
     });
+
+    // В demo режиме используем заглушки
+    if (process.env.SLETAT_DEMO_MODE === 'true') {
+      // Имитация задержки API
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      const cities = mockCitiesByCountry[params.countryId] || [];
+      
+      return NextResponse.json(cities, {
+        headers: {
+          'Cache-Control': 'public, max-age=21600', // 6 часов
+        },
+      });
+    }
 
     // Проверяем кеш
     const cached = citiesCache.get(params.countryId);

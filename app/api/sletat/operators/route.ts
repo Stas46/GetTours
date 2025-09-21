@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { sletatApi, withAuth, extractSletatData, getClientIP, checkRateLimit } from '@/lib/sletat/client';
 import type { TourOperator } from '@/lib/sletat/types';
 
-// Кеш для туроператоров (обновляется раз в 24 часа)
-let cache: { data: TourOperator[], timestamp: number } | null = null;
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 часа
+// Валидация параметров запроса
+const querySchema = z.object({
+  townFromId: z.string().transform(val => parseInt(val, 10)),
+  countryId: z.string().transform(val => parseInt(val, 10)),
+});
+
+// Кеш для туроператоров по маршруту
+const operatorsCache = new Map<string, { data: TourOperator[], timestamp: number }>();
+const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 часов
 
 export async function GET(request: NextRequest) {
   try {
@@ -18,14 +25,24 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Валидация параметров запроса
+    const { searchParams } = new URL(request.url);
+    const params = querySchema.parse({
+      townFromId: searchParams.get('townFromId'),
+      countryId: searchParams.get('countryId'),
+    });
+
+    const cacheKey = `${params.townFromId}-${params.countryId}`;
+
     // Проверяем кеш
-    if (cache && Date.now() - cache.timestamp < CACHE_TTL) {
+    const cached = operatorsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       return NextResponse.json(
-        cache.data,
+        cached.data,
         {
           headers: {
-            'Cache-Control': 'public, max-age=86400', // 24 часа
-            'ETag': `"operators-${cache.timestamp}"`,
+            'Cache-Control': 'public, max-age=21600', // 6 часов
+            'ETag': `"operators-${cacheKey}-${cached.timestamp}"`,
           },
         }
       );
@@ -33,7 +50,10 @@ export async function GET(request: NextRequest) {
 
     // Запрос к Sletat API
     const response = await sletatApi.get('/GetTourOperators', {
-      params: withAuth(),
+      params: withAuth({
+        townFromId: params.townFromId,
+        countryId: params.countryId,
+      }),
     });
 
     const data = extractSletatData<TourOperator[]>(response.data, 'GetTourOperatorsResult');
@@ -43,17 +63,17 @@ export async function GET(request: NextRequest) {
     }
 
     // Обновляем кеш
-    cache = {
+    operatorsCache.set(cacheKey, {
       data,
       timestamp: Date.now(),
-    };
+    });
 
     return NextResponse.json(
       data,
       {
         headers: {
-          'Cache-Control': 'public, max-age=86400',
-          'ETag': `"operators-${cache.timestamp}"`,
+          'Cache-Control': 'public, max-age=21600',
+          'ETag': `"operators-${cacheKey}-${Date.now()}"`,
         },
       }
     );
@@ -61,6 +81,17 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error in /api/sletat/operators:', error);
     
+    // Обработка ошибок валидации
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { 
+          error: 'Неверные параметры запроса. Требуются townFromId и countryId.',
+          details: error.errors.map(e => e.message).join(', '),
+        },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
       { 
         error: 'Ошибка получения списка туроператоров',

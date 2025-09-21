@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
 import { sletatApi, withAuth, extractSletatData, getClientIP, checkRateLimit } from '@/lib/sletat/client';
 import type { HotelStar } from '@/lib/sletat/types';
 
-// Кеш для звезд отелей (обновляется раз в 24 часа)
-let cache: { data: HotelStar[], timestamp: number } | null = null;
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 часа
+// Валидация параметров запроса
+const querySchema = z.object({
+  countryId: z.string().transform(val => parseInt(val, 10)),
+  towns: z.string().optional(), // Строка с ID городов, разделенных запятой
+});
+
+// Кеш для звезд отелей по стране и городам
+const starsCache = new Map<string, { data: HotelStar[], timestamp: number }>();
+const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 часов
 
 export async function GET(request: NextRequest) {
   try {
@@ -18,22 +25,41 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Валидация параметров запроса
+    const { searchParams } = new URL(request.url);
+    const params = querySchema.parse({
+      countryId: searchParams.get('countryId'),
+      towns: searchParams.get('towns'),
+    });
+
+    const cacheKey = `${params.countryId}-${params.towns || 'all'}`;
+
     // Проверяем кеш
-    if (cache && Date.now() - cache.timestamp < CACHE_TTL) {
+    const cached = starsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
       return NextResponse.json(
-        cache.data,
+        cached.data,
         {
           headers: {
-            'Cache-Control': 'public, max-age=86400', // 24 часа
-            'ETag': `"hotel-stars-${cache.timestamp}"`,
+            'Cache-Control': 'public, max-age=21600', // 6 часов
+            'ETag': `"hotel-stars-${cacheKey}-${cached.timestamp}"`,
           },
         }
       );
     }
 
     // Запрос к Sletat API
+    const apiParams: any = {
+      countryId: params.countryId,
+    };
+
+    // Добавляем towns если указан
+    if (params.towns) {
+      apiParams.towns = params.towns;
+    }
+
     const response = await sletatApi.get('/GetHotelStars', {
-      params: withAuth(),
+      params: withAuth(apiParams),
     });
 
     const data = extractSletatData<HotelStar[]>(response.data, 'GetHotelStarsResult');
@@ -43,17 +69,17 @@ export async function GET(request: NextRequest) {
     }
 
     // Обновляем кеш
-    cache = {
+    starsCache.set(cacheKey, {
       data,
       timestamp: Date.now(),
-    };
+    });
 
     return NextResponse.json(
       data,
       {
         headers: {
-          'Cache-Control': 'public, max-age=86400',
-          'ETag': `"hotel-stars-${cache.timestamp}"`,
+          'Cache-Control': 'public, max-age=21600',
+          'ETag': `"hotel-stars-${cacheKey}-${Date.now()}"`,
         },
       }
     );
@@ -61,6 +87,17 @@ export async function GET(request: NextRequest) {
   } catch (error) {
     console.error('Error in /api/sletat/hotel-stars:', error);
     
+    // Обработка ошибок валидации
+    if (error instanceof z.ZodError) {
+      return NextResponse.json(
+        { 
+          error: 'Неверные параметры запроса. Требуется countryId.',
+          details: error.errors.map(e => e.message).join(', '),
+        },
+        { status: 400 }
+      );
+    }
+
     return NextResponse.json(
       { 
         error: 'Ошибка получения списка звезд отелей',
