@@ -1,0 +1,25 @@
+{
+  "functions": {
+    "app/api/**/*.ts": {
+      "maxDuration": 30
+    }
+  },
+  "build": {
+    "env": {
+      "SLETAT_BASE_URL": "@sletat-base-url",
+      "SLETAT_LOGIN": "@sletat-login", 
+      "SLETAT_PASSWORD": "@sletat-password"
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
+      ]
+    }
+  ]
+}
